@@ -16,19 +16,24 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Bot token not configured" }, { status: 500 })
     }
 
+    console.log(`Getting file info for file ID: ${fileId}`)
+
     // Получаем информацию о файле
     const getFileResponse = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`)
-
     const fileData = await getFileResponse.json()
 
+    console.log("File info response:", JSON.stringify(fileData))
+
     if (!fileData.ok) {
-      throw new Error("Failed to get file from Telegram")
+      throw new Error(`Failed to get file from Telegram: ${fileData.description || "Unknown error"}`)
     }
 
     const filePath = fileData.result.file_path
 
     // Формируем URL для скачивания файла
     const fileUrl = `https://api.telegram.org/file/bot${botToken}/${filePath}`
+
+    console.log(`File URL: ${fileUrl}`)
 
     return NextResponse.json({ fileUrl })
   } catch (error) {

@@ -18,6 +18,7 @@ import {
   Search,
   Trash2,
   RefreshCw,
+  AlertCircle,
 } from "lucide-react"
 import { formatTime, parseTimeString } from "@/lib/utils"
 import type { TranscriptSegment, PodcastMark, PodcastEpisode } from "@/types"
@@ -25,6 +26,7 @@ import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useToast } from "@/components/ui/use-toast"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 export default function PodcastPlayer() {
   const [isPlaying, setIsPlaying] = useState(false)
@@ -48,7 +50,8 @@ export default function PodcastPlayer() {
     transcript: false,
   })
   const [isLoading, setIsLoading] = useState(false)
-  const [channelId, setChannelId] = useState<string | null>(null)
+  const [channelId, setChannelId] = useState<string>("meditationdosmundos")
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
   const [isInitialized, setIsInitialized] = useState(false)
   const { toast } = useToast()
@@ -105,18 +108,20 @@ export default function PodcastPlayer() {
   const fetchEpisodesFromTelegramChannel = async () => {
     try {
       setIsLoading(true)
+      setErrorMessage(null)
 
       // Call our API endpoint to get episodes from the channel
       const response = await fetch(`/api/telegram?channelId=${channelId}`)
 
       if (!response.ok) {
-        throw new Error("Failed to fetch episodes")
+        throw new Error(`Failed to fetch episodes: ${response.statusText}`)
       }
 
       const data = await response.json()
 
       if (data.error) {
-        throw new Error(data.error)
+        setErrorMessage(data.error)
+        console.warn("API returned error:", data.error)
       }
 
       // Save channel info if available
@@ -125,33 +130,39 @@ export default function PodcastPlayer() {
       }
 
       // Process episodes
-      const fetchedEpisodes = data.episodes.map((episode: any) => ({
-        id: episode.id,
-        title: episode.title,
-        audioUrl: episode.audioUrl,
-        duration: episode.duration,
-        date: episode.date,
-        // Group by seasons (10 episodes per season)
-        season: Math.floor(Number.parseInt(episode.id.split("-")[1] || "1") / 10) + 1,
-      }))
+      if (data.episodes && data.episodes.length > 0) {
+        const fetchedEpisodes = data.episodes.map((episode: any, index: number) => ({
+          id: episode.id || `episode-${index}`,
+          title: episode.title || `Медитация ${index + 1}`,
+          audioUrl: episode.audioUrl,
+          duration: episode.duration || 180,
+          date: episode.date || new Date().toISOString(),
+          // Group by seasons (10 episodes per season)
+          season: Math.floor(index / 10) + 1,
+        }))
 
-      setEpisodes(fetchedEpisodes)
-      setFilteredEpisodes(fetchedEpisodes)
+        setEpisodes(fetchedEpisodes)
+        setFilteredEpisodes(fetchedEpisodes)
 
-      if (fetchedEpisodes.length > 0) {
-        setCurrentEpisodeId(fetchedEpisodes[0].id)
-        loadEpisode(fetchedEpisodes[0])
+        if (fetchedEpisodes.length > 0) {
+          setCurrentEpisodeId(fetchedEpisodes[0].id)
+          loadEpisode(fetchedEpisodes[0])
+        }
+
+        toast({
+          title: "Эпизоды загружены",
+          description: `Загружено ${fetchedEpisodes.length} эпизодов из канала ${data.channelInfo?.title || channelId}`,
+        })
+      } else {
+        throw new Error("No episodes found in the response")
       }
-
-      toast({
-        title: "Эпизоды загружены",
-        description: `Загружено ${fetchedEpisodes.length} эпизодов из канала ${data.channelInfo?.title || channelId}`,
-      })
     } catch (error) {
       console.error("Error fetching episodes:", error)
+      setErrorMessage(`Ошибка загрузки эпизодов: ${error instanceof Error ? error.message : "Неизвестная ошибка"}`)
+
       toast({
         title: "Ошибка загрузки",
-        description: "Не удалось загрузить эпизоды из канала",
+        description: "Не удалось загрузить эпизоды из канала. Используются тестовые данные.",
         variant: "destructive",
       })
 
@@ -164,45 +175,44 @@ export default function PodcastPlayer() {
 
   // Load mock data for testing
   const loadMockData = () => {
-    const mockEpisodes: PodcastEpisode[] = Array.from({ length: 100 }, (_, i) => ({
-      id: `ep${i + 1}`,
-      title: `Эпизод ${i + 1}: ${getRandomTitle()}`,
-      audioUrl: getRandomAudioUrl(),
-      duration: Math.floor(Math.random() * 10800) + 1800, // 30-180 minutes
-      date: new Date(Date.now() - Math.random() * 31536000000).toISOString(), // Random date within last year
-      season: Math.floor(i / 20) + 1, // Group by seasons (20 episodes per season)
+    const meditationTitles = [
+      "Медитация для глубокого расслабления",
+      "Медитация осознанности",
+      "Медитация для сна",
+      "Утренняя медитация",
+      "Медитация для снятия стресса",
+      "Медитация благодарности",
+      "Медитация для концентрации",
+      "Медитация для начинающих",
+      "Медитация для гармонии",
+      "Медитация для позитивного мышления",
+    ]
+
+    const mockEpisodes: PodcastEpisode[] = Array.from({ length: 10 }, (_, i) => ({
+      id: `dos-mundos-${i + 1}`,
+      title: meditationTitles[i],
+      audioUrl: [
+        "https://commondatastorage.googleapis.com/codeskulptor-demos/DDR_assets/Kangaroo_MusiQue_-_The_Neverwritten_Role_Playing_Game.mp3",
+        "https://commondatastorage.googleapis.com/codeskulptor-assets/Epoq-Lepidoptera.ogg",
+        "https://commondatastorage.googleapis.com/codeskulptor-assets/Evillaugh.ogg",
+      ][i % 3],
+      duration: 180 + i * 30,
+      date: new Date(Date.now() - i * 86400000).toISOString(),
+      season: Math.floor(i / 10) + 1,
     }))
 
     setEpisodes(mockEpisodes)
     setFilteredEpisodes(mockEpisodes)
     setCurrentEpisodeId(mockEpisodes[0].id)
     loadEpisode(mockEpisodes[0])
-  }
 
-  // Helper functions for mock data
-  const getRandomTitle = () => {
-    const titles = [
-      "Технологии будущего",
-      "Искусственный интеллект",
-      "Веб-разработка",
-      "Мобильные приложения",
-      "Блокчейн и криптовалюты",
-      "Кибербезопасность",
-      "Дизайн интерфейсов",
-      "Машинное обучение",
-      "Облачные технологии",
-      "Интернет вещей",
-    ]
-    return titles[Math.floor(Math.random() * titles.length)]
-  }
-
-  const getRandomAudioUrl = () => {
-    const urls = [
-      "https://commondatastorage.googleapis.com/codeskulptor-demos/DDR_assets/Kangaroo_MusiQue_-_The_Neverwritten_Role_Playing_Game.mp3",
-      "https://commondatastorage.googleapis.com/codeskulptor-assets/Epoq-Lepidoptera.ogg",
-      "https://commondatastorage.googleapis.com/codeskulptor-assets/Evillaugh.ogg",
-    ]
-    return urls[Math.floor(Math.random() * urls.length)]
+    // Set channel info for mock data
+    setChannelInfo({
+      title: "Dos Mundos Медитации",
+      username: "meditationdosmundos",
+      description: "Канал с медитациями для гармонии и расслабления",
+      photoUrl: null,
+    })
   }
 
   // Load episode data and fetch transcription
@@ -248,27 +258,27 @@ export default function PodcastPlayer() {
       const mockMarks: PodcastMark[] = [
         {
           id: `${episode.id}-mark-1`,
-          title: "Вступление",
+          title: "Начало медитации",
           time: 0,
         },
         {
           id: `${episode.id}-mark-2`,
-          title: "Первая тема",
+          title: "Глубокое дыхание",
           time: Math.floor(episode.duration * 0.2),
         },
         {
           id: `${episode.id}-mark-3`,
-          title: "Вторая тема",
+          title: "Визуализация",
           time: Math.floor(episode.duration * 0.5),
         },
         {
           id: `${episode.id}-mark-4`,
-          title: "Вопросы слушателей",
+          title: "Расслабление",
           time: Math.floor(episode.duration * 0.7),
         },
         {
           id: `${episode.id}-mark-5`,
-          title: "Заключение",
+          title: "Завершение",
           time: Math.floor(episode.duration * 0.9),
         },
       ]
@@ -290,17 +300,17 @@ export default function PodcastPlayer() {
       const mockMarks: PodcastMark[] = [
         {
           id: `${episode.id}-mark-1`,
-          title: "Вступление",
+          title: "Начало медитации",
           time: 0,
         },
         {
           id: `${episode.id}-mark-2`,
-          title: "Первая тема",
+          title: "Глубокое дыхание",
           time: Math.floor(episode.duration * 0.2),
         },
         {
           id: `${episode.id}-mark-3`,
-          title: "Вторая тема",
+          title: "Визуализация",
           time: Math.floor(episode.duration * 0.5),
         },
       ]
@@ -376,7 +386,14 @@ export default function PodcastPlayer() {
     if (isPlaying) {
       audio.pause()
     } else {
-      audio.play()
+      audio.play().catch((error) => {
+        console.error("Error playing audio:", error)
+        toast({
+          title: "Ошибка воспроизведения",
+          description: "Не удалось воспроизвести аудио. Проверьте URL файла.",
+          variant: "destructive",
+        })
+      })
     }
     setIsPlaying(!isPlaying)
   }
@@ -539,7 +556,27 @@ export default function PodcastPlayer() {
   return (
     <div className="flex flex-col w-full max-w-3xl mx-auto p-2 space-y-3">
       {/* Audio element */}
-      <audio ref={audioRef} preload="metadata" />
+      <audio
+        ref={audioRef}
+        preload="metadata"
+        onError={(e) => {
+          console.error("Audio error:", e)
+          toast({
+            title: "Ошибка аудио",
+            description: "Не удалось загрузить аудиофайл. Проверьте URL или подключение к интернету.",
+            variant: "destructive",
+          })
+        }}
+      />
+
+      {/* Error message */}
+      {errorMessage && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Ошибка</AlertTitle>
+          <AlertDescription>{errorMessage}</AlertDescription>
+        </Alert>
+      )}
 
       {/* Channel info */}
       {channelInfo && (
