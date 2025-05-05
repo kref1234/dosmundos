@@ -8,72 +8,72 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Audio URL and episode ID are required" }, { status: 400 })
     }
 
-    // Проверяем, начинается ли URL с tg://
-    let publicAudioUrl = audioUrl
-    if (audioUrl.startsWith("tg://")) {
-      // Извлекаем file_id из tg:// URL
-      const fileId = audioUrl.replace("tg://file?id=", "")
+    // In a real implementation, you would:
+    // 1. Download the audio from Telegram or get it from cache
+    // 2. Send it to AssemblyAI for transcription
+    // 3. Process and return the transcription
+    // 4. Store the transcription for future use
 
-      // Получаем публичный URL через Telegram API
-      const response = await fetch(`/api/telegram/file?fileId=${fileId}`)
-      const data = await response.json()
-
-      if (data.error) {
-        throw new Error(data.error)
-      }
-
-      publicAudioUrl = data.fileUrl
-    }
-
-    // Проверяем, есть ли уже транскрипция для этого эпизода
-    // В реальном приложении здесь был бы запрос к базе данных
-
-    // Отправляем аудио в AssemblyAI для транскрипции
-    const assemblyApiKey = process.env.ASSEMBLYAI_API_KEY
-
-    if (!assemblyApiKey) {
-      return NextResponse.json({ error: "AssemblyAI API key not configured" }, { status: 500 })
-    }
-
-    // Создаем задачу транскрипции
-    const transcriptionResponse = await fetch("https://api.assemblyai.com/v2/transcript", {
+    // Example AssemblyAI API call (commented out)
+    /*
+    const response = await fetch("https://api.assemblyai.com/v2/transcript", {
       method: "POST",
       headers: {
-        Authorization: assemblyApiKey,
-        "Content-Type": "application/json",
+        "Authorization": process.env.ASSEMBLYAI_API_KEY,
+        "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        audio_url: publicAudioUrl,
-        language_code: "ru", // Используем русский язык
-        speaker_labels: true, // Определение говорящих
-        auto_chapters: true, // Автоматическое разделение на главы
-      }),
-    })
-
-    if (!transcriptionResponse.ok) {
-      const errorData = await transcriptionResponse.json()
-      throw new Error(`AssemblyAI error: ${JSON.stringify(errorData)}`)
+        audio_url: audioUrl,
+        speaker_labels: true,
+        auto_chapters: true
+      })
+    });
+    
+    const transcriptData = await response.json();
+    const transcriptId = transcriptData.id;
+    
+    // Poll for completion
+    let transcript;
+    let status = "processing";
+    
+    while (status !== "completed" && status !== "error") {
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      
+      const pollingResponse = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptId}`, {
+        headers: {
+          "Authorization": process.env.ASSEMBLYAI_API_KEY
+        }
+      });
+      
+      transcript = await pollingResponse.json();
+      status = transcript.status;
     }
+    
+    if (status === "error") {
+      throw new Error("Transcription failed");
+    }
+    
+    // Process the transcript into segments
+    const segments = transcript.words.map((word, index) => ({
+      id: `${episodeId}-segment-${index}`,
+      text: word.text,
+      start: word.start / 1000, // Convert to seconds
+      end: word.end / 1000
+    }));
+    
+    // Store the transcription for future use
+    // This would typically be done in a database
+    */
 
-    const transcriptionData = await transcriptionResponse.json()
-    const transcriptId = transcriptionData.id
+    // For demo purposes, return mock data
+    const mockSegments = Array.from({ length: 20 }, (_, i) => ({
+      id: `${episodeId}-segment-${i + 1}`,
+      text: `Это часть транскрипции для эпизода, сегмент ${i + 1}. Здесь будет текст, распознанный с помощью AssemblyAI.`,
+      start: i * 15,
+      end: (i + 1) * 15,
+    }))
 
-    // Для демонстрационных целей мы не будем ждать завершения транскрипции
-    // В реальном приложении вы бы использовали webhook или периодически проверяли статус
-
-    // Возвращаем ID транскрипции и временные данные
-    return NextResponse.json({
-      transcriptId,
-      status: "processing",
-      message: "Transcription is being processed",
-      // Временные данные для отображения
-      segments: Array.from({ length: 10 }, (_, i) => ({
-        id: `${episodeId}-segment-${i + 1}`,
-        text: `Транскрипция обрабатывается... Это временный текст для сегмента ${i + 1}.`,
-        start: i * 30,
-        end: (i + 1) * 30,
-      })),
-    })
+    return NextResponse.json({ segments: mockSegments })
   } catch (error) {
     console.error("Transcription error:", error)
     return NextResponse.json({ error: "Failed to transcribe audio" }, { status: 500 })

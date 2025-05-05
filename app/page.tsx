@@ -53,9 +53,13 @@ export default function PodcastPlayer() {
   const [isInitialized, setIsInitialized] = useState(false)
   const { toast } = useToast()
 
-  // Добавьте новое состояние для отслеживания ID транскрипции
-  const [transcriptionId, setTranscriptionId] = useState<string | null>(null)
-  const [isTranscribing, setIsTranscribing] = useState(false)
+  // Добавьте новое состояние для информации о канале
+  const [channelInfo, setChannelInfo] = useState<{
+    title: string
+    username: string
+    description: string
+    photoUrl: string | null
+  } | null>(null)
 
   // Initialize Telegram Mini App
   useEffect(() => {
@@ -72,12 +76,12 @@ export default function PodcastPlayer() {
         const startParam = webApp.initDataUnsafe?.start_param
 
         // If we have a start parameter, use it as channel ID
+        // Otherwise use the Dos Mundos meditation channel
         if (startParam) {
           setChannelId(startParam)
         } else {
-          // For testing, you can set a default channel ID
-          // In production, you should handle this case properly
-          setChannelId("-1001234567890") // Replace with your channel ID for testing
+          // Use the Dos Mundos meditation channel ID
+          setChannelId("meditationdosmundos")
         }
 
         setIsInitialized(true)
@@ -115,6 +119,11 @@ export default function PodcastPlayer() {
         throw new Error(data.error)
       }
 
+      // Save channel info if available
+      if (data.channelInfo) {
+        setChannelInfo(data.channelInfo)
+      }
+
       // Process episodes
       const fetchedEpisodes = data.episodes.map((episode: any) => ({
         id: episode.id,
@@ -122,8 +131,8 @@ export default function PodcastPlayer() {
         audioUrl: episode.audioUrl,
         duration: episode.duration,
         date: episode.date,
-        // Group by seasons (20 episodes per season)
-        season: Math.floor(Number.parseInt(episode.id.split("-")[1]) / 20) + 1,
+        // Group by seasons (10 episodes per season)
+        season: Math.floor(Number.parseInt(episode.id.split("-")[1] || "1") / 10) + 1,
       }))
 
       setEpisodes(fetchedEpisodes)
@@ -136,7 +145,7 @@ export default function PodcastPlayer() {
 
       toast({
         title: "Эпизоды загружены",
-        description: `Загружено ${fetchedEpisodes.length} эпизодов из канала`,
+        description: `Загружено ${fetchedEpisodes.length} эпизодов из канала ${data.channelInfo?.title || channelId}`,
       })
     } catch (error) {
       console.error("Error fetching episodes:", error)
@@ -196,7 +205,7 @@ export default function PodcastPlayer() {
     return urls[Math.floor(Math.random() * urls.length)]
   }
 
-  // Обновите функцию loadEpisode для работы с реальной транскрипцией
+  // Load episode data and fetch transcription
   const loadEpisode = async (episode: PodcastEpisode) => {
     const audio = audioRef.current
     if (!audio) return
@@ -208,24 +217,9 @@ export default function PodcastPlayer() {
     setDuration(episode.duration)
     setIsPlaying(false)
     setActiveSegmentId(null)
-    setTranscript([])
-    setMarks([])
-    setTranscriptionId(null)
-    setIsTranscribing(false)
 
     try {
-      // Сначала загружаем базовые метки для эпизода
-      const mockMarks: PodcastMark[] = [
-        {
-          id: `${episode.id}-mark-1`,
-          title: "Начало",
-          time: 0,
-        },
-      ]
-      setMarks(mockMarks)
-
-      // Запускаем процесс транскрипции
-      setIsTranscribing(true)
+      // Fetch transcription for this episode
       const response = await fetch("/api/transcribe", {
         method: "POST",
         headers: {
@@ -238,7 +232,7 @@ export default function PodcastPlayer() {
       })
 
       if (!response.ok) {
-        throw new Error("Failed to start transcription")
+        throw new Error("Failed to fetch transcription")
       }
 
       const data = await response.json()
@@ -247,25 +241,43 @@ export default function PodcastPlayer() {
         throw new Error(data.error)
       }
 
-      // Устанавливаем временные сегменты транскрипции
       setTranscript(data.segments)
 
-      // Если есть ID транскрипции, сохраняем его для последующих проверок
-      if (data.transcriptId) {
-        setTranscriptionId(data.transcriptId)
+      // Fetch marks for this episode (in a real app, this would be a separate API call)
+      // For now, we'll use mock data
+      const mockMarks: PodcastMark[] = [
+        {
+          id: `${episode.id}-mark-1`,
+          title: "Вступление",
+          time: 0,
+        },
+        {
+          id: `${episode.id}-mark-2`,
+          title: "Первая тема",
+          time: Math.floor(episode.duration * 0.2),
+        },
+        {
+          id: `${episode.id}-mark-3`,
+          title: "Вторая тема",
+          time: Math.floor(episode.duration * 0.5),
+        },
+        {
+          id: `${episode.id}-mark-4`,
+          title: "Вопросы слушателей",
+          time: Math.floor(episode.duration * 0.7),
+        },
+        {
+          id: `${episode.id}-mark-5`,
+          title: "Заключение",
+          time: Math.floor(episode.duration * 0.9),
+        },
+      ]
 
-        // Запускаем периодическую проверку статуса транскрипции
-        checkTranscriptionStatus(data.transcriptId)
-      }
+      setMarks(mockMarks)
     } catch (error) {
       console.error("Error loading episode data:", error)
-      toast({
-        title: "Ошибка загрузки",
-        description: "Не удалось загрузить транскрипцию. Используются тестовые данные.",
-        variant: "destructive",
-      })
 
-      // Используем тестовые данные при ошибке
+      // Use mock data if API fails
       const mockTranscript: TranscriptSegment[] = Array.from({ length: 20 }, (_, i) => ({
         id: `${episode.id}-segment-${i + 1}`,
         text: `Это часть транскрипции для эпизода "${episode.title}", сегмент ${i + 1}.`,
@@ -294,68 +306,6 @@ export default function PodcastPlayer() {
       ]
 
       setMarks(mockMarks)
-    } finally {
-      setIsTranscribing(false)
-    }
-  }
-
-  // Добавьте функцию для проверки статуса транскрипции
-  const checkTranscriptionStatus = async (transcriptId: string) => {
-    try {
-      const response = await fetch(`/api/transcribe/status?id=${transcriptId}`)
-
-      if (!response.ok) {
-        throw new Error("Failed to check transcription status")
-      }
-
-      const data = await response.json()
-
-      if (data.error) {
-        throw new Error(data.error)
-      }
-
-      // Если транскрипция завершена
-      if (data.status === "completed") {
-        setTranscript(data.segments)
-
-        // Если есть главы, добавляем их как метки
-        if (data.chapters && data.chapters.length > 0) {
-          const chapterMarks = data.chapters.map((chapter) => ({
-            id: `mark-${chapter.id}`,
-            title: chapter.title,
-            time: chapter.start,
-          }))
-
-          setMarks((prevMarks) => {
-            // Объединяем существующие метки с новыми главами
-            const existingUserMarks = prevMarks.filter((mark) => !mark.id.includes("chapter-"))
-            return [...existingUserMarks, ...chapterMarks].sort((a, b) => a.time - b.time)
-          })
-        }
-
-        toast({
-          title: "Транскрипция готова",
-          description: "Транскрипция аудио успешно завершена",
-        })
-
-        setIsTranscribing(false)
-      } else if (data.status === "processing" || data.status === "queued") {
-        // Если транскрипция все еще обрабатывается, проверяем снова через 10 секунд
-        setTimeout(() => {
-          checkTranscriptionStatus(transcriptId)
-        }, 10000)
-      } else {
-        // Если произошла ошибка
-        throw new Error(`Transcription failed with status: ${data.status}`)
-      }
-    } catch (error) {
-      console.error("Error checking transcription status:", error)
-      toast({
-        title: "Ошибка транскрипции",
-        description: "Не удалось получить результаты транскрипции",
-        variant: "destructive",
-      })
-      setIsTranscribing(false)
     }
   }
 
@@ -591,6 +541,28 @@ export default function PodcastPlayer() {
       {/* Audio element */}
       <audio ref={audioRef} preload="metadata" />
 
+      {/* Channel info */}
+      {channelInfo && (
+        <Card className="p-3">
+          <div className="flex items-center space-x-3">
+            {channelInfo.photoUrl && (
+              <div className="w-12 h-12 rounded-full overflow-hidden">
+                <img
+                  src={channelInfo.photoUrl || "/placeholder.svg"}
+                  alt={channelInfo.title}
+                  className="w-full h-full object-cover"
+                />
+              </div>
+            )}
+            <div>
+              <h1 className="text-xl font-bold">{channelInfo.title}</h1>
+              <p className="text-sm text-muted-foreground">@{channelInfo.username}</p>
+            </div>
+          </div>
+          {channelInfo.description && <p className="mt-2 text-sm">{channelInfo.description}</p>}
+        </Card>
+      )}
+
       {/* Player controls */}
       <Card className="p-3">
         <div className="flex items-center justify-between mb-2">
@@ -795,19 +767,6 @@ export default function PodcastPlayer() {
         {!collapsedPanels.transcript && (
           <div className="mt-2 max-h-64 overflow-y-auto">
             <div className="space-y-3">
-              {isTranscribing && (
-                <div className="flex items-center justify-center p-4">
-                  <div className="animate-spin mr-2 h-4 w-4 border-2 border-primary border-t-transparent rounded-full"></div>
-                  <p className="text-sm">Транскрипция обрабатывается...</p>
-                </div>
-              )}
-
-              {transcript.length === 0 && !isTranscribing && (
-                <p className="text-sm text-muted-foreground p-4 text-center">
-                  Транскрипция не найдена. Выберите эпизод для начала транскрипции.
-                </p>
-              )}
-
               {transcript.map((segment) => (
                 <div
                   key={segment.id}
@@ -817,11 +776,6 @@ export default function PodcastPlayer() {
                     <span className="text-xs font-medium text-muted-foreground">
                       {formatTime(segment.start)} - {formatTime(segment.end)}
                     </span>
-                    {segment.speaker && (
-                      <Badge variant="outline" className="text-xs">
-                        Говорящий {segment.speaker}
-                      </Badge>
-                    )}
                   </div>
 
                   {editingTranscriptId === segment.id ? (
@@ -869,6 +823,7 @@ export default function PodcastPlayer() {
                   )}
                 </div>
               ))}
+              {transcript.length === 0 && <p className="text-sm text-muted-foreground">Загрузка транскрипции...</p>}
             </div>
           </div>
         )}
