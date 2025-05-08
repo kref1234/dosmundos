@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { BookmarkPlus, Trash2 } from "lucide-react"
+import { BookmarkPlus, Trash2, Upload, FileAudio, Plus } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
 import { AudioPlayer } from "@/components/audio-player"
 import { TranscriptView } from "@/components/transcript-view"
@@ -14,7 +14,7 @@ import { parseTranscriptFile } from "@/lib/transcript-parser"
 import { dbService } from "@/lib/db-service"
 import { formatTime } from "@/lib/utils"
 import type { PodcastEpisode, TranscriptSegment, PodcastMark, UploadedFile } from "@/types"
-import { TranscriptInfo } from "@/components/transcript-info"
+import { FileUpload } from "@/components/file-upload"
 
 // Демо-данные для имитации загруженных администратором файлов
 const DEMO_EPISODES = [
@@ -39,8 +39,11 @@ export default function PodcastPlayer() {
   // Состояние эпизода
   const [episode, setEpisode] = useState<PodcastEpisode | null>(null)
   const [episodes, setEpisodes] = useState<PodcastEpisode[]>(DEMO_EPISODES)
+  const [isAddingEpisode, setIsAddingEpisode] = useState(false)
+  const [newEpisodeTitle, setNewEpisodeTitle] = useState("")
 
   // Состояние аудио
+  const [audioFile, setAudioFile] = useState<UploadedFile | null>(null)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
 
@@ -48,6 +51,7 @@ export default function PodcastPlayer() {
   const [transcriptRu, setTranscriptRu] = useState<TranscriptSegment[]>([])
   const [transcriptEs, setTranscriptEs] = useState<TranscriptSegment[]>([])
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null)
+  const [isTranscriptUploading, setIsTranscriptUploading] = useState(false)
 
   // Состояние меток
   const [marks, setMarks] = useState<PodcastMark[]>([])
@@ -55,7 +59,6 @@ export default function PodcastPlayer() {
 
   // Состояние интерфейса
   const [activeTab, setActiveTab] = useState<"ru" | "es">("ru")
-  const [isTranscriptUploading, setIsTranscriptUploading] = useState(false)
 
   const { toast } = useToast()
 
@@ -100,6 +103,39 @@ export default function PodcastPlayer() {
     setTranscriptRu([])
     setTranscriptEs([])
     setActiveSegmentId(null)
+  }
+
+  // Обработка загрузки нового эпизода
+  const handleNewEpisodeUpload = (uploadedFile: UploadedFile) => {
+    if (!newEpisodeTitle.trim()) {
+      toast({
+        title: "Ошибка",
+        description: "Введите название эпизода",
+        variant: "destructive",
+      })
+      return
+    }
+
+    const newEpisode: PodcastEpisode = {
+      id: `episode-${Date.now()}`,
+      title: newEpisodeTitle,
+      audioUrl: uploadedFile.url,
+      duration: 0,
+      date: new Date().toISOString(),
+    }
+
+    setEpisodes([...episodes, newEpisode])
+    setAudioFile(uploadedFile)
+    setIsAddingEpisode(false)
+    setNewEpisodeTitle("")
+
+    toast({
+      title: "Эпизод добавлен",
+      description: newEpisode.title,
+    })
+
+    // Автоматически выбираем новый эпизод
+    selectEpisode(newEpisode)
   }
 
   // Обработка загрузки транскрипции (для администратора)
@@ -286,166 +322,216 @@ export default function PodcastPlayer() {
   }, [currentTime, activeTab, transcriptRu, transcriptEs])
 
   return (
-    <div className="container mx-auto py-4 max-w-4xl">
+    <div className="container mx-auto py-4 max-w-2xl">
       {/* Выбор эпизода */}
       {!episode ? (
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle>{activeTab === "ru" ? "Выберите эпизод" : "Seleccione un episodio"}</CardTitle>
+            <Button variant="outline" size="sm" onClick={() => setIsAddingEpisode(!isAddingEpisode)} className="h-8">
+              {isAddingEpisode ? (
+                activeTab === "ru" ? (
+                  "Отмена"
+                ) : (
+                  "Cancelar"
+                )
+              ) : (
+                <>
+                  <Plus className="h-4 w-4 mr-1" />
+                  {activeTab === "ru" ? "Добавить" : "Añadir"}
+                </>
+              )}
+            </Button>
           </CardHeader>
           <CardContent>
-            <div className="space-y-2">
-              {episodes.map((ep) => (
-                <div
-                  key={ep.id}
-                  className="p-3 border rounded-md cursor-pointer hover:bg-accent transition-colors"
-                  onClick={() => selectEpisode(ep)}
-                >
-                  <h3 className="font-medium">{ep.title}</h3>
-                  <p className="text-sm text-muted-foreground">{formatTime(ep.duration)}</p>
-                </div>
-              ))}
-            </div>
+            {isAddingEpisode ? (
+              <div className="space-y-3">
+                <Input
+                  value={newEpisodeTitle}
+                  onChange={(e) => setNewEpisodeTitle(e.target.value)}
+                  placeholder={activeTab === "ru" ? "Название эпизода" : "Título del episodio"}
+                  className="mb-2"
+                />
+                <FileUpload
+                  onFileUploaded={handleNewEpisodeUpload}
+                  accept="audio/*"
+                  label={activeTab === "ru" ? "Загрузить аудио" : "Cargar audio"}
+                  icon={<FileAudio className="h-5 w-5 text-primary" />}
+                />
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {episodes.map((ep) => (
+                  <div
+                    key={ep.id}
+                    className="p-3 border rounded-md cursor-pointer hover:bg-accent transition-colors"
+                    onClick={() => selectEpisode(ep)}
+                  >
+                    <h3 className="font-medium">{ep.title}</h3>
+                    <p className="text-sm text-muted-foreground">{formatTime(ep.duration)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* Левая колонка - аудио и метки */}
-          <div className="md:col-span-1 space-y-3">
-            {/* Название эпизода и аудио плеер */}
-            <Card className="overflow-hidden">
-              <CardHeader className="p-3 pb-0">
-                <CardTitle className="text-base flex justify-between items-center">
-                  <span>{activeTab === "ru" ? "Аудиофайл" : "Archivo de audio"}</span>
+        <div className="space-y-4">
+          {/* Название эпизода и аудио плеер */}
+          <Card>
+            <CardHeader className="p-3 pb-0">
+              <CardTitle className="text-base flex justify-between items-center">
+                <span>{activeTab === "ru" ? "Аудиофайл" : "Archivo de audio"}</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setEpisode(null)
+                    setMarks([])
+                    setTranscriptRu([])
+                    setTranscriptEs([])
+                  }}
+                  className="h-6 text-xs"
+                >
+                  {activeTab === "ru" ? "Назад" : "Atrás"}
+                </Button>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-3">
+              <h3 className="text-sm font-medium mb-2 truncate">{episode.title}</h3>
+              <AudioPlayer
+                audioUrl={episode.audioUrl}
+                onTimeUpdate={setCurrentTime}
+                onDurationChange={setDuration}
+                language={activeTab}
+                currentTime={currentTime}
+              />
+            </CardContent>
+          </Card>
+
+          {/* Метки */}
+          <Card>
+            <CardHeader className="p-3 pb-0">
+              <CardTitle className="text-base flex justify-between items-center">
+                <span>{activeTab === "ru" ? "Метки" : "Marcas"}</span>
+                {marks.length > 0 && (
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={() => {
-                      setEpisode(null)
-                      setMarks([])
-                      setTranscriptRu([])
-                      setTranscriptEs([])
+                      if (episode) {
+                        dbService.deleteMarksByEpisodeId(episode.id)
+                        setMarks([])
+                        toast({
+                          title: activeTab === "ru" ? "Метки удалены" : "Marcas eliminadas",
+                        })
+                      }
                     }}
-                    className="h-6 text-xs"
+                    className="h-6 flex items-center space-x-1 text-destructive"
                   >
-                    {activeTab === "ru" ? "Назад" : "Atrás"}
+                    <Trash2 className="h-3 w-3" />
+                    <span className="text-xs">{activeTab === "ru" ? "Очистить" : "Limpiar"}</span>
                   </Button>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-3">
-                <h3 className="text-sm font-medium mb-2 truncate">{episode.title}</h3>
-                <AudioPlayer
-                  audioUrl={episode.audioUrl}
-                  onTimeUpdate={setCurrentTime}
-                  onDurationChange={setDuration}
-                  language={activeTab}
-                  currentTime={currentTime}
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-3">
+              <div className="flex items-center space-x-2 mb-2">
+                <Input
+                  placeholder={activeTab === "ru" ? "Название метки" : "Título de la marca"}
+                  value={markTitle}
+                  onChange={(e) => setMarkTitle(e.target.value)}
+                  className="flex-1 h-8 text-sm"
                 />
-              </CardContent>
-            </Card>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => addMark()}
+                  className="h-8 flex items-center space-x-1"
+                >
+                  <BookmarkPlus className="h-3 w-3" />
+                  <span className="text-xs">{activeTab === "ru" ? "Добавить" : "Añadir"}</span>
+                </Button>
+              </div>
 
-            {/* Метки */}
-            <Card className="overflow-hidden">
-              <CardHeader className="p-3 pb-0">
-                <CardTitle className="text-base flex justify-between items-center">
-                  <span>{activeTab === "ru" ? "Метки" : "Marcas"}</span>
-                  {marks.length > 0 && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        if (episode) {
-                          dbService.deleteMarksByEpisodeId(episode.id)
-                          setMarks([])
-                          toast({
-                            title: activeTab === "ru" ? "Метки удалены" : "Marcas eliminadas",
-                          })
-                        }
-                      }}
-                      className="h-6 flex items-center space-x-1 text-destructive"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                      <span className="text-xs">{activeTab === "ru" ? "Очистить" : "Limpiar"}</span>
-                    </Button>
-                  )}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-3">
-                <div className="flex items-center space-x-2 mb-2">
-                  <Input
-                    placeholder={activeTab === "ru" ? "Название метки" : "Título de la marca"}
-                    value={markTitle}
-                    onChange={(e) => setMarkTitle(e.target.value)}
-                    className="flex-1 h-8 text-sm"
+              <MarksView
+                marks={marks}
+                onMarkClick={navigateToMark}
+                onMarkEdit={handleMarkEdit}
+                onMarkDelete={handleMarkDelete}
+                language={activeTab}
+              />
+            </CardContent>
+          </Card>
+
+          {/* Транскрипция */}
+          <Card>
+            <CardHeader className="p-3 pb-0">
+              <CardTitle className="text-base flex justify-between items-center">
+                <span>{activeTab === "ru" ? "Транскрипция" : "Transcripción"}</span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs flex items-center gap-1"
+                  disabled={isTranscriptUploading}
+                  onClick={() => {
+                    // Создаем скрытый input для выбора файла
+                    const input = document.createElement("input")
+                    input.type = "file"
+                    input.accept = ".json"
+                    input.onchange = async (e) => {
+                      const target = e.target as HTMLInputElement
+                      if (target.files && target.files.length > 0) {
+                        const file = target.files[0]
+                        const url = URL.createObjectURL(file)
+                        await handleTranscriptUpload({ file, url })
+                      }
+                    }
+                    input.click()
+                  }}
+                >
+                  <Upload className="h-3 w-3" />
+                  <span>
+                    {isTranscriptUploading
+                      ? activeTab === "ru"
+                        ? "Загрузка..."
+                        : "Cargando..."
+                      : activeTab === "ru"
+                        ? "Загрузить JSON"
+                        : "Cargar JSON"}
+                  </span>
+                </Button>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-3">
+              <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "ru" | "es")}>
+                <TabsList className="grid w-full grid-cols-2 mb-3">
+                  <TabsTrigger value="ru">Русский</TabsTrigger>
+                  <TabsTrigger value="es">Español</TabsTrigger>
+                </TabsList>
+                <TabsContent value="ru">
+                  <TranscriptView
+                    transcript={transcriptRu}
+                    activeSegmentId={activeSegmentId}
+                    onSegmentClick={navigateToSegment}
+                    onSegmentEdit={handleTranscriptEdit}
+                    onAddMark={handleAddMarkFromTranscript}
+                    language="ru"
                   />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => addMark()}
-                    className="h-8 flex items-center space-x-1"
-                  >
-                    <BookmarkPlus className="h-3 w-3" />
-                    <span className="text-xs">{activeTab === "ru" ? "Добавить" : "Añadir"}</span>
-                  </Button>
-                </div>
-
-                <MarksView
-                  marks={marks}
-                  onMarkClick={navigateToMark}
-                  onMarkEdit={handleMarkEdit}
-                  onMarkDelete={handleMarkDelete}
-                  language={activeTab}
-                />
-              </CardContent>
-            </Card>
-
-            {/* Информация о транскрипции */}
-            <Card className="overflow-hidden">
-              <CardHeader className="p-3 pb-0">
-                <CardTitle className="text-base">{activeTab === "ru" ? "Информация" : "Información"}</CardTitle>
-              </CardHeader>
-              <CardContent className="p-3">
-                <TranscriptInfo transcript={activeTab === "ru" ? transcriptRu : transcriptEs} language={activeTab} />
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Правая колонка - транскрипция */}
-          <div className="md:col-span-2">
-            <Card className="h-full">
-              <CardHeader className="p-3 pb-0">
-                <CardTitle className="text-base">{activeTab === "ru" ? "Транскрипция" : "Transcripción"}</CardTitle>
-              </CardHeader>
-              <CardContent className="p-3">
-                <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "ru" | "es")}>
-                  <TabsList className="grid w-full grid-cols-2 mb-3">
-                    <TabsTrigger value="ru">Русский</TabsTrigger>
-                    <TabsTrigger value="es">Español</TabsTrigger>
-                  </TabsList>
-                  <TabsContent value="ru">
-                    <TranscriptView
-                      transcript={transcriptRu}
-                      activeSegmentId={activeSegmentId}
-                      onSegmentClick={navigateToSegment}
-                      onSegmentEdit={handleTranscriptEdit}
-                      onAddMark={handleAddMarkFromTranscript}
-                      language="ru"
-                    />
-                  </TabsContent>
-                  <TabsContent value="es">
-                    <TranscriptView
-                      transcript={transcriptEs}
-                      activeSegmentId={activeSegmentId}
-                      onSegmentClick={navigateToSegment}
-                      onSegmentEdit={handleTranscriptEdit}
-                      onAddMark={handleAddMarkFromTranscript}
-                      language="es"
-                    />
-                  </TabsContent>
-                </Tabs>
-              </CardContent>
-            </Card>
-          </div>
+                </TabsContent>
+                <TabsContent value="es">
+                  <TranscriptView
+                    transcript={transcriptEs}
+                    activeSegmentId={activeSegmentId}
+                    onSegmentClick={navigateToSegment}
+                    onSegmentEdit={handleTranscriptEdit}
+                    onAddMark={handleAddMarkFromTranscript}
+                    language="es"
+                  />
+                </TabsContent>
+              </Tabs>
+            </CardContent>
+          </Card>
         </div>
       )}
     </div>
