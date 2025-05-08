@@ -20,7 +20,7 @@
     "@radix-ui/react-dialog": "1.1.4",
     "@radix-ui/react-dropdown-menu": "2.1.4",
     "@radix-ui/react-hover-card": "1.1.4",
-    "@radix-ui/react-label": "2.1.1",
+    "@radix-ui/react-label": "latest",
     "@radix-ui/react-menubar": "1.1.4",
     "@radix-ui/react-navigation-menu": "1.2.3",
     "@radix-ui/react-popover": "1.1.4",
@@ -57,7 +57,8 @@
     "tailwind-merge": "^2.5.5",
     "tailwindcss-animate": "^1.0.7",
     "vaul": "^0.9.6",
-    "zod": "^3.24.1"
+    "zod": "^3.24.1",
+    "telegram": "latest"
   },
   "devDependencies": {
     "@types/node": "^22",

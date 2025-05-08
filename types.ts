@@ -3,12 +3,15 @@ export interface TranscriptSegment {
   text: string
   start: number
   end: number
+  language: "ru" | "es"
 }
 
 export interface PodcastMark {
   id: string
   title: string
   time: number
+  episodeId: string
+  createdAt: string
 }
 
 export interface PodcastEpisode {
@@ -16,6 +19,19 @@ export interface PodcastEpisode {
   title: string
   audioUrl: string
   duration: number
-  date?: string
-  season?: number
+  date: string
+  transcriptRu?: TranscriptSegment[]
+  transcriptEs?: TranscriptSegment[]
+}
+
+export interface TranscriptFile {
+  language: "ru" | "es"
+  segments: TranscriptSegment[]
+}
+
+export interface DatabaseMark extends PodcastMark {}
+
+export interface UploadedFile {
+  file: File
+  url: string
 }

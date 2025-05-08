@@ -1,870 +1,453 @@
 "use client"
 
-import { useEffect, useState, useRef } from "react"
-import { Button } from "@/components/ui/button"
-import { Slider } from "@/components/ui/slider"
-import { Input } from "@/components/ui/input"
-import {
-  Play,
-  Pause,
-  SkipBack,
-  SkipForward,
-  BookmarkPlus,
-  Edit,
-  Check,
-  X,
-  ChevronDown,
-  ChevronUp,
-  Search,
-  Trash2,
-  RefreshCw,
-  AlertCircle,
-} from "lucide-react"
-import { formatTime, parseTimeString } from "@/lib/utils"
-import type { TranscriptSegment, PodcastMark, PodcastEpisode } from "@/types"
-import { Badge } from "@/components/ui/badge"
-import { Card } from "@/components/ui/card"
+import { useState, useEffect } from "react"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { BookmarkPlus, Trash2 } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { AudioPlayer } from "@/components/audio-player"
+import { TranscriptView } from "@/components/transcript-view"
+import { MarksView } from "@/components/marks-view"
+import { parseTranscriptFile } from "@/lib/transcript-parser"
+import { dbService } from "@/lib/db-service"
+import { formatTime } from "@/lib/utils"
+import type { PodcastEpisode, TranscriptSegment, PodcastMark, UploadedFile } from "@/types"
+import { TranscriptInfo } from "@/components/transcript-info"
+
+// Демо-данные для имитации загруженных администратором файлов
+const DEMO_EPISODES = [
+  {
+    id: "episode-1",
+    title: "Медитация для глубокого расслабления",
+    audioUrl:
+      "https://commondatastorage.googleapis.com/codeskulptor-demos/DDR_assets/Kangaroo_MusiQue_-_The_Neverwritten_Role_Playing_Game.mp3",
+    duration: 180,
+    date: new Date().toISOString(),
+  },
+  {
+    id: "episode-2",
+    title: "Медитация осознанности",
+    audioUrl: "https://commondatastorage.googleapis.com/codeskulptor-assets/Epoq-Lepidoptera.ogg",
+    duration: 210,
+    date: new Date().toISOString(),
+  },
+]
 
 export default function PodcastPlayer() {
-  const [isPlaying, setIsPlaying] = useState(false)
+  // Состояние эпизода
+  const [episode, setEpisode] = useState<PodcastEpisode | null>(null)
+  const [episodes, setEpisodes] = useState<PodcastEpisode[]>(DEMO_EPISODES)
+
+  // Состояние аудио
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
-  const [transcript, setTranscript] = useState<TranscriptSegment[]>([])
+
+  // Состояние транскрипции
+  const [transcriptRu, setTranscriptRu] = useState<TranscriptSegment[]>([])
+  const [transcriptEs, setTranscriptEs] = useState<TranscriptSegment[]>([])
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null)
+
+  // Состояние меток
   const [marks, setMarks] = useState<PodcastMark[]>([])
   const [markTitle, setMarkTitle] = useState("")
-  const [editingMarkId, setEditingMarkId] = useState<string | null>(null)
-  const [editingMarkTime, setEditingMarkTime] = useState<string>("")
-  const [editingTranscriptId, setEditingTranscriptId] = useState<string | null>(null)
-  const [editingTranscriptText, setEditingTranscriptText] = useState<string>("")
-  const [episodes, setEpisodes] = useState<PodcastEpisode[]>([])
-  const [filteredEpisodes, setFilteredEpisodes] = useState<PodcastEpisode[]>([])
-  const [currentEpisodeId, setCurrentEpisodeId] = useState<string>("")
-  const [searchQuery, setSearchQuery] = useState("")
-  const [collapsedPanels, setCollapsedPanels] = useState({
-    episodes: false,
-    marks: false,
-    transcript: false,
-  })
-  const [isLoading, setIsLoading] = useState(false)
-  const [channelId, setChannelId] = useState<string>("meditationdosmundos")
-  const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const audioRef = useRef<HTMLAudioElement>(null)
-  const [isInitialized, setIsInitialized] = useState(false)
+
+  // Состояние интерфейса
+  const [activeTab, setActiveTab] = useState<"ru" | "es">("ru")
+  const [isTranscriptUploading, setIsTranscriptUploading] = useState(false)
+
   const { toast } = useToast()
 
-  // Добавьте новое состояние для информации о канале
-  const [channelInfo, setChannelInfo] = useState<{
-    title: string
-    username: string
-    description: string
-    photoUrl: string | null
-  } | null>(null)
-
-  // Initialize Telegram Mini App
+  // Загрузка меток из базы данных при выборе эпизода
   useEffect(() => {
-    const script = document.createElement("script")
-    script.src = "https://telegram.org/js/telegram-web-app.js"
-    script.async = true
-    script.onload = () => {
-      if (window.Telegram && window.Telegram.WebApp) {
-        window.Telegram.WebApp.ready()
-        window.Telegram.WebApp.expand()
-
-        // Get channel ID from Telegram Mini App params
-        const webApp = window.Telegram.WebApp
-        const startParam = webApp.initDataUnsafe?.start_param
-
-        // If we have a start parameter, use it as channel ID
-        // Otherwise use the Dos Mundos meditation channel
-        if (startParam) {
-          setChannelId(startParam)
-        } else {
-          // Use the Dos Mundos meditation channel ID
-          setChannelId("meditationdosmundos")
-        }
-
-        setIsInitialized(true)
-      }
+    if (episode?.id) {
+      const savedMarks = dbService.getMarksByEpisodeId(episode.id)
+      setMarks(savedMarks)
     }
-    document.body.appendChild(script)
+  }, [episode?.id])
 
-    return () => {
-      document.body.removeChild(script)
-    }
-  }, [])
-
-  // Load podcast data from Telegram channel
+  // Имитация загрузки транскрипции для демо-эпизода
   useEffect(() => {
-    if (!isInitialized || !channelId) return
-
-    fetchEpisodesFromTelegramChannel()
-  }, [isInitialized, channelId])
-
-  // Fetch episodes from Telegram channel
-  const fetchEpisodesFromTelegramChannel = async () => {
-    try {
-      setIsLoading(true)
-      setErrorMessage(null)
-
-      // Call our API endpoint to get episodes from the channel
-      const response = await fetch(`/api/telegram?channelId=${channelId}`)
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch episodes: ${response.statusText}`)
-      }
-
-      const data = await response.json()
-
-      if (data.error) {
-        setErrorMessage(data.error)
-        console.warn("API returned error:", data.error)
-      }
-
-      // Save channel info if available
-      if (data.channelInfo) {
-        setChannelInfo(data.channelInfo)
-      }
-
-      // Process episodes
-      if (data.episodes && data.episodes.length > 0) {
-        const fetchedEpisodes = data.episodes.map((episode: any, index: number) => ({
-          id: episode.id || `episode-${index}`,
-          title: episode.title || `Медитация ${index + 1}`,
-          audioUrl: episode.audioUrl,
-          duration: episode.duration || 180,
-          date: episode.date || new Date().toISOString(),
-          // Group by seasons (10 episodes per season)
-          season: Math.floor(index / 10) + 1,
-        }))
-
-        setEpisodes(fetchedEpisodes)
-        setFilteredEpisodes(fetchedEpisodes)
-
-        if (fetchedEpisodes.length > 0) {
-          setCurrentEpisodeId(fetchedEpisodes[0].id)
-          loadEpisode(fetchedEpisodes[0])
-        }
-
-        toast({
-          title: "Эпизоды загружены",
-          description: `Загружено ${fetchedEpisodes.length} эпизодов из канала ${data.channelInfo?.title || channelId}`,
-        })
-      } else {
-        throw new Error("No episodes found in the response")
-      }
-    } catch (error) {
-      console.error("Error fetching episodes:", error)
-      setErrorMessage(`Ошибка загрузки эпизодов: ${error instanceof Error ? error.message : "Неизвестная ошибка"}`)
-
-      toast({
-        title: "Ошибка загрузки",
-        description: "Не удалось загрузить эпизоды из канала. Используются тестовые данные.",
-        variant: "destructive",
-      })
-
-      // Load mock data for testing
-      loadMockData()
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  // Load mock data for testing
-  const loadMockData = () => {
-    const meditationTitles = [
-      "Медитация для глубокого расслабления",
-      "Медитация осознанности",
-      "Медитация для сна",
-      "Утренняя медитация",
-      "Медитация для снятия стресса",
-      "Медитация благодарности",
-      "Медитация для концентрации",
-      "Медитация для начинающих",
-      "Медитация для гармонии",
-      "Медитация для позитивного мышления",
-    ]
-
-    const mockEpisodes: PodcastEpisode[] = Array.from({ length: 10 }, (_, i) => ({
-      id: `dos-mundos-${i + 1}`,
-      title: meditationTitles[i],
-      audioUrl: [
-        "https://commondatastorage.googleapis.com/codeskulptor-demos/DDR_assets/Kangaroo_MusiQue_-_The_Neverwritten_Role_Playing_Game.mp3",
-        "https://commondatastorage.googleapis.com/codeskulptor-assets/Epoq-Lepidoptera.ogg",
-        "https://commondatastorage.googleapis.com/codeskulptor-assets/Evillaugh.ogg",
-      ][i % 3],
-      duration: 180 + i * 30,
-      date: new Date(Date.now() - i * 86400000).toISOString(),
-      season: Math.floor(i / 10) + 1,
-    }))
-
-    setEpisodes(mockEpisodes)
-    setFilteredEpisodes(mockEpisodes)
-    setCurrentEpisodeId(mockEpisodes[0].id)
-    loadEpisode(mockEpisodes[0])
-
-    // Set channel info for mock data
-    setChannelInfo({
-      title: "Dos Mundos Медитации",
-      username: "meditationdosmundos",
-      description: "Канал с медитациями для гармонии и расслабления",
-      photoUrl: null,
-    })
-  }
-
-  // Load episode data and fetch transcription
-  const loadEpisode = async (episode: PodcastEpisode) => {
-    const audio = audioRef.current
-    if (!audio) return
-
-    // Reset player state
-    audio.src = episode.audioUrl
-    audio.load()
-    setCurrentTime(0)
-    setDuration(episode.duration)
-    setIsPlaying(false)
-    setActiveSegmentId(null)
-
-    try {
-      // Fetch transcription for this episode
-      const response = await fetch("/api/transcribe", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          audioUrl: episode.audioUrl,
-          episodeId: episode.id,
-        }),
-      })
-
-      if (!response.ok) {
-        throw new Error("Failed to fetch transcription")
-      }
-
-      const data = await response.json()
-
-      if (data.error) {
-        throw new Error(data.error)
-      }
-
-      setTranscript(data.segments)
-
-      // Fetch marks for this episode (in a real app, this would be a separate API call)
-      // For now, we'll use mock data
-      const mockMarks: PodcastMark[] = [
-        {
-          id: `${episode.id}-mark-1`,
-          title: "Начало медитации",
-          time: 0,
-        },
-        {
-          id: `${episode.id}-mark-2`,
-          title: "Глубокое дыхание",
-          time: Math.floor(episode.duration * 0.2),
-        },
-        {
-          id: `${episode.id}-mark-3`,
-          title: "Визуализация",
-          time: Math.floor(episode.duration * 0.5),
-        },
-        {
-          id: `${episode.id}-mark-4`,
-          title: "Расслабление",
-          time: Math.floor(episode.duration * 0.7),
-        },
-        {
-          id: `${episode.id}-mark-5`,
-          title: "Завершение",
-          time: Math.floor(episode.duration * 0.9),
-        },
-      ]
-
-      setMarks(mockMarks)
-    } catch (error) {
-      console.error("Error loading episode data:", error)
-
-      // Use mock data if API fails
-      const mockTranscript: TranscriptSegment[] = Array.from({ length: 20 }, (_, i) => ({
-        id: `${episode.id}-segment-${i + 1}`,
-        text: `Это часть транскрипции для эпизода "${episode.title}", сегмент ${i + 1}.`,
-        start: i * (episode.duration / 20),
-        end: (i + 1) * (episode.duration / 20),
+    if (episode && !transcriptRu.length && !transcriptEs.length) {
+      // Создаем демо-транскрипцию
+      const demoTranscriptRu: TranscriptSegment[] = Array.from({ length: 10 }, (_, i) => ({
+        id: `segment-ru-${i}`,
+        text: `Это часть транскрипции на русском языке, сегмент ${i + 1}. Здесь будет текст, распознанный с помощью AssemblyAI.`,
+        start: i * 15,
+        end: (i + 1) * 15,
+        language: "ru",
       }))
 
-      setTranscript(mockTranscript)
+      const demoTranscriptEs: TranscriptSegment[] = Array.from({ length: 10 }, (_, i) => ({
+        id: `segment-es-${i}`,
+        text: `Esta es una parte de la transcripción en español, segmento ${i + 1}. Aquí estará el texto reconocido por AssemblyAI.`,
+        start: i * 15,
+        end: (i + 1) * 15,
+        language: "es",
+      }))
 
-      const mockMarks: PodcastMark[] = [
-        {
-          id: `${episode.id}-mark-1`,
-          title: "Начало медитации",
-          time: 0,
-        },
-        {
-          id: `${episode.id}-mark-2`,
-          title: "Глубокое дыхание",
-          time: Math.floor(episode.duration * 0.2),
-        },
-        {
-          id: `${episode.id}-mark-3`,
-          title: "Визуализация",
-          time: Math.floor(episode.duration * 0.5),
-        },
-      ]
-
-      setMarks(mockMarks)
+      setTranscriptRu(demoTranscriptRu)
+      setTranscriptEs(demoTranscriptEs)
     }
+  }, [episode, transcriptRu.length, transcriptEs.length])
+
+  // Выбор эпизода
+  const selectEpisode = (selectedEpisode: PodcastEpisode) => {
+    setEpisode(selectedEpisode)
+    setCurrentTime(0)
+    setDuration(selectedEpisode.duration)
+    setTranscriptRu([])
+    setTranscriptEs([])
+    setActiveSegmentId(null)
   }
 
-  // Filter episodes based on search query
-  useEffect(() => {
-    if (searchQuery.trim() === "") {
-      setFilteredEpisodes(episodes)
-    } else {
-      const query = searchQuery.toLowerCase()
-      const filtered = episodes.filter((episode) => episode.title.toLowerCase().includes(query))
-      setFilteredEpisodes(filtered)
-    }
-  }, [searchQuery, episodes])
+  // Обработка загрузки транскрипции (для администратора)
+  const handleTranscriptUpload = async (uploadedFile: UploadedFile) => {
+    try {
+      setIsTranscriptUploading(true)
+      const transcriptData = await parseTranscriptFile(uploadedFile.file)
 
-  // Handle episode selection
-  const selectEpisode = (episodeId: string) => {
-    const episode = episodes.find((ep) => ep.id === episodeId)
-    if (episode) {
-      setCurrentEpisodeId(episodeId)
-      loadEpisode(episode)
-    }
-  }
-
-  // Toggle panel collapse state
-  const togglePanel = (panel: keyof typeof collapsedPanels) => {
-    setCollapsedPanels((prev) => ({
-      ...prev,
-      [panel]: !prev[panel],
-    }))
-  }
-
-  // Update current time
-  useEffect(() => {
-    const audio = audioRef.current
-    if (!audio) return
-
-    const updateTime = () => {
-      setCurrentTime(audio.currentTime)
-
-      // Find active transcript segment
-      const activeSegment = transcript.find(
-        (segment) => audio.currentTime >= segment.start && audio.currentTime <= segment.end,
-      )
-
-      if (activeSegment) {
-        setActiveSegmentId(activeSegment.id)
+      if (Object.keys(transcriptData).length === 0) {
+        throw new Error("Failed to parse transcript file")
       }
-    }
 
-    const handleLoadedMetadata = () => {
-      setDuration(audio.duration)
-    }
+      // Обрабатываем русскую транскрипцию
+      if (transcriptData.ru) {
+        setTranscriptRu(transcriptData.ru.segments)
 
-    audio.addEventListener("timeupdate", updateTime)
-    audio.addEventListener("loadedmetadata", handleLoadedMetadata)
+        // Обновляем эпизод с русской транскрипцией
+        if (episode) {
+          setEpisode({
+            ...episode,
+            transcriptRu: transcriptData.ru.segments,
+          })
+        }
+      }
 
-    return () => {
-      audio.removeEventListener("timeupdate", updateTime)
-      audio.removeEventListener("loadedmetadata", handleLoadedMetadata)
-    }
-  }, [transcript])
+      // Обрабатываем испанскую транскрипцию
+      if (transcriptData.es) {
+        setTranscriptEs(transcriptData.es.segments)
 
-  // Play/pause control
-  const togglePlayPause = () => {
-    const audio = audioRef.current
-    if (!audio) return
+        // Обновляем эпизод с испанской транскрипцией
+        if (episode) {
+          setEpisode({
+            ...episode,
+            transcriptEs: transcriptData.es.segments,
+          })
+        }
+      }
 
-    if (isPlaying) {
-      audio.pause()
-    } else {
-      audio.play().catch((error) => {
-        console.error("Error playing audio:", error)
-        toast({
-          title: "Ошибка воспроизведения",
-          description: "Не удалось воспроизвести аудио. Проверьте URL файла.",
-          variant: "destructive",
-        })
-      })
-    }
-    setIsPlaying(!isPlaying)
-  }
+      // Формируем сообщение об успешной загрузке
+      const ruSegments = transcriptData.ru?.segments.length || 0
+      const esSegments = transcriptData.es?.segments.length || 0
 
-  // Seek to time
-  const seekTo = (time: number) => {
-    const audio = audioRef.current
-    if (!audio) return
-
-    audio.currentTime = time
-    setCurrentTime(time)
-  }
-
-  // Handle slider change
-  const handleSliderChange = (value: number[]) => {
-    seekTo(value[0])
-  }
-
-  // Skip forward/backward
-  const skip = (seconds: number) => {
-    const audio = audioRef.current
-    if (!audio) return
-
-    const newTime = Math.max(0, Math.min(audio.duration, audio.currentTime + seconds))
-    seekTo(newTime)
-  }
-
-  // Add a new mark at current time
-  const addMark = () => {
-    if (!markTitle.trim()) return
-
-    const newMark: PodcastMark = {
-      id: `mark-${Date.now()}`,
-      title: markTitle,
-      time: currentTime,
-    }
-
-    setMarks([...marks, newMark].sort((a, b) => a.time - b.time))
-    setMarkTitle("")
-
-    toast({
-      title: "Метка добавлена",
-      description: `Метка "${markTitle}" добавлена в ${formatTime(currentTime)}`,
-    })
-  }
-
-  // Delete a mark
-  const deleteMark = (markId: string) => {
-    const markToDelete = marks.find((mark) => mark.id === markId)
-    setMarks(marks.filter((mark) => mark.id !== markId))
-
-    if (markToDelete) {
       toast({
-        title: "Метка удалена",
-        description: `Метка "${markToDelete.title}" удалена`,
+        title: "Транскрипция загружена",
+        description: `Загружено ${ruSegments} сегментов на русском и ${esSegments} на испанском`,
       })
+    } catch (error) {
+      console.error("Error loading transcript:", error)
+      toast({
+        title: activeTab === "ru" ? "Ошибка загрузки транскрипции" : "Error al cargar la transcripción",
+        description: activeTab === "ru" ? "Проверьте формат файла JSON" : "Verifique el formato del archivo JSON",
+        variant: "destructive",
+      })
+    } finally {
+      setIsTranscriptUploading(false)
     }
   }
 
-  // Start editing a mark's time
-  const startEditingMark = (mark: PodcastMark) => {
-    setEditingMarkId(mark.id)
-    setEditingMarkTime(formatTime(mark.time))
-  }
+  // Добавление новой метки
+  const addMark = (time: number = currentTime, title: string = markTitle) => {
+    if (!episode) return
 
-  // Save edited mark time
-  const saveEditedMarkTime = () => {
-    if (!editingMarkId) return
-
-    const seconds = parseTimeString(editingMarkTime)
-    if (seconds === null) {
+    if (!title.trim()) {
       toast({
-        title: "Ошибка формата времени",
-        description: "Используйте формат MM:SS или HH:MM:SS",
+        title: activeTab === "ru" ? "Ошибка" : "Error",
+        description: activeTab === "ru" ? "Введите название метки" : "Ingrese el título de la marca",
         variant: "destructive",
       })
       return
     }
 
-    // Update the mark
-    const updatedMarks = marks
-      .map((mark) => (mark.id === editingMarkId ? { ...mark, time: seconds } : mark))
-      .sort((a, b) => a.time - b.time)
+    const newMark: PodcastMark = {
+      id: `mark-${Date.now()}`,
+      title: title,
+      time: time,
+      episodeId: episode.id,
+      createdAt: new Date().toISOString(),
+    }
 
-    setMarks(updatedMarks)
+    // Сохраняем метку в базу данных
+    dbService.addMark(newMark)
 
-    // Reset editing state
-    setEditingMarkId(null)
-    setEditingMarkTime("")
+    // Обновляем состояние
+    setMarks([...marks, newMark].sort((a, b) => a.time - b.time))
+    setMarkTitle("")
 
     toast({
-      title: "Метка обновлена",
-      description: `Время метки изменено на ${formatTime(seconds)}`,
+      title: activeTab === "ru" ? "Метка добавлена" : "Marca añadida",
+      description: `${newMark.title} (${formatTime(time)})`,
     })
   }
 
-  // Cancel editing mark time
-  const cancelEditingMark = () => {
-    setEditingMarkId(null)
-    setEditingMarkTime("")
+  // Обработчик добавления метки из транскрипции
+  const handleAddMarkFromTranscript = (time: number, suggestedTitle: string) => {
+    addMark(time, suggestedTitle)
   }
 
-  // Start editing transcript text
-  const startEditingTranscript = (segment: TranscriptSegment) => {
-    setEditingTranscriptId(segment.id)
-    setEditingTranscriptText(segment.text)
-  }
+  // Редактирование метки
+  const handleMarkEdit = (mark: PodcastMark, newTime?: number, newTitle?: string) => {
+    const updatedMark = {
+      ...mark,
+      ...(newTime !== undefined ? { time: newTime } : {}),
+      ...(newTitle !== undefined ? { title: newTitle } : {}),
+    }
 
-  // Save edited transcript text
-  const saveEditedTranscript = () => {
-    if (!editingTranscriptId || !editingTranscriptText.trim()) return
+    // Обновляем метку в базе данных
+    dbService.updateMark(updatedMark)
 
-    setTranscript(
-      transcript.map((segment) =>
-        segment.id === editingTranscriptId ? { ...segment, text: editingTranscriptText } : segment,
-      ),
-    )
-
-    setEditingTranscriptId(null)
-    setEditingTranscriptText("")
+    // Обновляем состояние
+    setMarks(marks.map((m) => (m.id === mark.id ? updatedMark : m)).sort((a, b) => a.time - b.time))
 
     toast({
-      title: "Транскрипция обновлена",
-      description: "Текст транскрипции успешно изменен",
+      title: activeTab === "ru" ? "Метка обновлена" : "Marca actualizada",
+      description: newTime !== undefined ? `${mark.title} (${formatTime(newTime)})` : updatedMark.title,
     })
   }
 
-  // Cancel editing transcript
-  const cancelEditingTranscript = () => {
-    setEditingTranscriptId(null)
-    setEditingTranscriptText("")
+  // Удаление метки
+  const handleMarkDelete = (markId: string) => {
+    // Удаляем метку из базы данных
+    dbService.deleteMark(markId)
+
+    // Обновляем состояние
+    const markToDelete = marks.find((m) => m.id === markId)
+    setMarks(marks.filter((m) => m.id !== markId))
+
+    if (markToDelete) {
+      toast({
+        title: activeTab === "ru" ? "Метка удалена" : "Marca eliminada",
+        description: markToDelete.title,
+      })
+    }
   }
 
-  // Navigate to a transcript segment
-  const navigateToSegment = (segment: TranscriptSegment) => {
-    seekTo(segment.start)
-  }
+  // Редактирование транскрипции
+  const handleTranscriptEdit = (segment: TranscriptSegment, newText: string) => {
+    if (segment.language === "ru") {
+      setTranscriptRu(transcriptRu.map((s) => (s.id === segment.id ? { ...s, text: newText } : s)))
 
-  // Navigate to a mark
-  const navigateToMark = (mark: PodcastMark) => {
-    seekTo(mark.time)
-  }
-
-  // Group episodes by season
-  const episodesBySeason = episodes.reduce(
-    (acc, episode) => {
-      const season = episode.season || 1
-      if (!acc[season]) {
-        acc[season] = []
+      // Обновляем эпизод
+      if (episode) {
+        setEpisode({
+          ...episode,
+          transcriptRu: transcriptRu.map((s) => (s.id === segment.id ? { ...s, text: newText } : s)),
+        })
       }
-      acc[season].push(episode)
-      return acc
-    },
-    {} as Record<number, PodcastEpisode[]>,
-  )
+    } else {
+      setTranscriptEs(transcriptEs.map((s) => (s.id === segment.id ? { ...s, text: newText } : s)))
 
-  // Get current episode
-  const currentEpisode = episodes.find((ep) => ep.id === currentEpisodeId)
+      // Обновляем эпизод
+      if (episode) {
+        setEpisode({
+          ...episode,
+          transcriptEs: transcriptEs.map((s) => (s.id === segment.id ? { ...s, text: newText } : s)),
+        })
+      }
+    }
+
+    toast({
+      title: activeTab === "ru" ? "Транскрипция обновлена" : "Transcripción actualizada",
+    })
+  }
+
+  // Навигация к сегменту транскрипции
+  const navigateToSegment = (segment: TranscriptSegment) => {
+    setCurrentTime(segment.start)
+    setActiveSegmentId(segment.id)
+  }
+
+  // Навигация к метке
+  const navigateToMark = (mark: PodcastMark) => {
+    setCurrentTime(mark.time)
+  }
+
+  // Обновление активного сегмента при изменении времени
+  useEffect(() => {
+    const transcript = activeTab === "ru" ? transcriptRu : transcriptEs
+
+    const activeSegment = transcript.find((segment) => currentTime >= segment.start && currentTime <= segment.end)
+
+    if (activeSegment) {
+      setActiveSegmentId(activeSegment.id)
+    }
+  }, [currentTime, activeTab, transcriptRu, transcriptEs])
 
   return (
-    <div className="flex flex-col w-full max-w-3xl mx-auto p-2 space-y-3">
-      {/* Audio element */}
-      <audio
-        ref={audioRef}
-        preload="metadata"
-        onError={(e) => {
-          console.error("Audio error:", e)
-          toast({
-            title: "Ошибка аудио",
-            description: "Не удалось загрузить аудиофайл. Проверьте URL или подключение к интернету.",
-            variant: "destructive",
-          })
-        }}
-      />
-
-      {/* Error message */}
-      {errorMessage && (
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Ошибка</AlertTitle>
-          <AlertDescription>{errorMessage}</AlertDescription>
-        </Alert>
-      )}
-
-      {/* Channel info */}
-      {channelInfo && (
-        <Card className="p-3">
-          <div className="flex items-center space-x-3">
-            {channelInfo.photoUrl && (
-              <div className="w-12 h-12 rounded-full overflow-hidden">
-                <img
-                  src={channelInfo.photoUrl || "/placeholder.svg"}
-                  alt={channelInfo.title}
-                  className="w-full h-full object-cover"
-                />
-              </div>
-            )}
-            <div>
-              <h1 className="text-xl font-bold">{channelInfo.title}</h1>
-              <p className="text-sm text-muted-foreground">@{channelInfo.username}</p>
-            </div>
-          </div>
-          {channelInfo.description && <p className="mt-2 text-sm">{channelInfo.description}</p>}
-        </Card>
-      )}
-
-      {/* Player controls */}
-      <Card className="p-3">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-lg font-bold line-clamp-1">{currentEpisode?.title || "Загрузка..."}</h2>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={fetchEpisodesFromTelegramChannel}
-            disabled={isLoading}
-            title="Обновить список эпизодов"
-          >
-            <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
-          </Button>
-        </div>
-
-        {/* Progress bar */}
-        <div className="mb-3">
-          <Slider
-            value={[currentTime]}
-            max={duration || 100}
-            step={0.1}
-            onValueChange={handleSliderChange}
-            className="mb-1"
-          />
-          <div className="flex justify-between text-xs text-muted-foreground">
-            <span>{formatTime(currentTime)}</span>
-            <span>{formatTime(duration)}</span>
-          </div>
-        </div>
-
-        {/* Control buttons */}
-        <div className="flex items-center justify-center space-x-4">
-          <Button variant="ghost" size="icon" onClick={() => skip(-10)} title="Назад 10 секунд">
-            <SkipBack className="h-5 w-5" />
-          </Button>
-
-          <Button variant="default" size="icon" className="h-12 w-12 rounded-full" onClick={togglePlayPause}>
-            {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6 ml-1" />}
-          </Button>
-
-          <Button variant="ghost" size="icon" onClick={() => skip(10)} title="Вперед 10 секунд">
-            <SkipForward className="h-5 w-5" />
-          </Button>
-        </div>
-      </Card>
-
-      {/* Episodes panel */}
-      <Card className="p-3">
-        <div className="flex items-center justify-between cursor-pointer" onClick={() => togglePanel("episodes")}>
-          <h3 className="text-lg font-semibold">Эпизоды</h3>
-          <Button variant="ghost" size="icon" className="h-8 w-8">
-            {collapsedPanels.episodes ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
-          </Button>
-        </div>
-
-        {!collapsedPanels.episodes && (
-          <div className="mt-2">
-            <div className="relative mb-3">
-              <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Поиск эпизодов..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-8"
-              />
-            </div>
-
-            <Tabs defaultValue="1">
-              <TabsList className="w-full mb-2 overflow-x-auto flex-nowrap">
-                {Object.keys(episodesBySeason).map((season) => (
-                  <TabsTrigger key={season} value={season} className="flex-shrink-0">
-                    Сезон {season}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-
-              {Object.entries(episodesBySeason).map(([season, seasonEpisodes]) => (
-                <TabsContent key={season} value={season} className="m-0">
-                  <div className="grid gap-1 max-h-48 overflow-y-auto">
-                    {seasonEpisodes
-                      .filter((ep) => filteredEpisodes.some((fep) => fep.id === ep.id))
-                      .map((episode) => (
-                        <div
-                          key={episode.id}
-                          className={`p-2 rounded-md cursor-pointer ${
-                            currentEpisodeId === episode.id ? "bg-primary/10" : "hover:bg-accent"
-                          }`}
-                          onClick={() => selectEpisode(episode.id)}
-                        >
-                          <div className="flex justify-between items-center">
-                            <div className="font-medium line-clamp-1">{episode.title}</div>
-                            <div className="text-xs text-muted-foreground">{formatTime(episode.duration)}</div>
-                          </div>
-                        </div>
-                      ))}
-                  </div>
-                </TabsContent>
-              ))}
-            </Tabs>
-          </div>
-        )}
-      </Card>
-
-      {/* Add mark section */}
-      <Card className="p-3">
-        <div className="flex items-center space-x-2">
-          <Input
-            placeholder="Название метки"
-            value={markTitle}
-            onChange={(e) => setMarkTitle(e.target.value)}
-            className="flex-1"
-          />
-          <Button variant="outline" onClick={addMark} className="flex items-center space-x-1">
-            <BookmarkPlus className="h-4 w-4" />
-            <span>Добавить</span>
-          </Button>
-        </div>
-      </Card>
-
-      {/* Marks panel */}
-      <Card className="p-3">
-        <div className="flex items-center justify-between cursor-pointer" onClick={() => togglePanel("marks")}>
-          <h3 className="text-lg font-semibold">Метки</h3>
-          <Button variant="ghost" size="icon" className="h-8 w-8">
-            {collapsedPanels.marks ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
-          </Button>
-        </div>
-
-        {!collapsedPanels.marks && (
-          <div className="mt-2 flex flex-wrap gap-2">
-            {marks.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Нет меток. Добавьте метки для быстрой навигации.</p>
-            ) : (
-              marks.map((mark) => (
-                <div key={mark.id} className="relative">
-                  {editingMarkId === mark.id ? (
-                    <div className="flex items-center space-x-1 border rounded-md p-1">
-                      <Input
-                        value={editingMarkTime}
-                        onChange={(e) => setEditingMarkTime(e.target.value)}
-                        className="w-20 h-7 text-xs"
-                      />
-                      <span className="text-xs font-medium truncate max-w-[100px]">{mark.title}</span>
-                      <Button variant="ghost" size="icon" onClick={saveEditedMarkTime} className="h-6 w-6">
-                        <Check className="h-3 w-3" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={cancelEditingMark} className="h-6 w-6">
-                        <X className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  ) : (
-                    <Badge
-                      variant="outline"
-                      className="flex items-center gap-1 px-2 py-1 cursor-pointer hover:bg-accent"
-                      onClick={() => navigateToMark(mark)}
-                    >
-                      <span className="text-xs font-medium">{formatTime(mark.time)}</span>
-                      <span className="text-xs">•</span>
-                      <span className="text-xs truncate max-w-[100px]">{mark.title}</span>
-                      <div className="flex items-center">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            startEditingMark(mark)
-                          }}
-                          className="h-4 w-4 ml-1"
-                        >
-                          <Edit className="h-2 w-2" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            deleteMark(mark.id)
-                          }}
-                          className="h-4 w-4"
-                        >
-                          <Trash2 className="h-2 w-2" />
-                        </Button>
-                      </div>
-                    </Badge>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-        )}
-      </Card>
-
-      {/* Transcript panel */}
-      <Card className="p-3">
-        <div className="flex items-center justify-between cursor-pointer" onClick={() => togglePanel("transcript")}>
-          <h3 className="text-lg font-semibold">Транскрипция</h3>
-          <Button variant="ghost" size="icon" className="h-8 w-8">
-            {collapsedPanels.transcript ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
-          </Button>
-        </div>
-
-        {!collapsedPanels.transcript && (
-          <div className="mt-2 max-h-64 overflow-y-auto">
-            <div className="space-y-3">
-              {transcript.map((segment) => (
+    <div className="container mx-auto py-4 max-w-4xl">
+      {/* Выбор эпизода */}
+      {!episode ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>{activeTab === "ru" ? "Выберите эпизод" : "Seleccione un episodio"}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {episodes.map((ep) => (
                 <div
-                  key={segment.id}
-                  className={`p-2 rounded ${activeSegmentId === segment.id ? "bg-primary/10 border-l-4 border-primary" : ""}`}
+                  key={ep.id}
+                  className="p-3 border rounded-md cursor-pointer hover:bg-accent transition-colors"
+                  onClick={() => selectEpisode(ep)}
                 >
-                  <div className="flex justify-between items-center mb-1">
-                    <span className="text-xs font-medium text-muted-foreground">
-                      {formatTime(segment.start)} - {formatTime(segment.end)}
-                    </span>
-                  </div>
-
-                  {editingTranscriptId === segment.id ? (
-                    <div className="flex flex-col space-y-2">
-                      <Input
-                        value={editingTranscriptText}
-                        onChange={(e) => setEditingTranscriptText(e.target.value)}
-                        className="w-full text-sm"
-                      />
-                      <div className="flex space-x-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={saveEditedTranscript}
-                          className="flex items-center space-x-1"
-                        >
-                          <Check className="h-3 w-3" />
-                          <span>Сохранить</span>
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={cancelEditingTranscript}
-                          className="flex items-center space-x-1"
-                        >
-                          <X className="h-3 w-3" />
-                          <span>Отмена</span>
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex items-start">
-                      <p className="text-sm flex-1 cursor-pointer" onClick={() => navigateToSegment(segment)}>
-                        {segment.text}
-                      </p>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => startEditingTranscript(segment)}
-                        className="h-6 w-6 ml-2 mt-0"
-                      >
-                        <Edit className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  )}
+                  <h3 className="font-medium">{ep.title}</h3>
+                  <p className="text-sm text-muted-foreground">{formatTime(ep.duration)}</p>
                 </div>
               ))}
-              {transcript.length === 0 && <p className="text-sm text-muted-foreground">Загрузка транскрипции...</p>}
             </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* Левая колонка - аудио и метки */}
+          <div className="md:col-span-1 space-y-3">
+            {/* Название эпизода и аудио плеер */}
+            <Card className="overflow-hidden">
+              <CardHeader className="p-3 pb-0">
+                <CardTitle className="text-base flex justify-between items-center">
+                  <span>{activeTab === "ru" ? "Аудиофайл" : "Archivo de audio"}</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setEpisode(null)
+                      setMarks([])
+                      setTranscriptRu([])
+                      setTranscriptEs([])
+                    }}
+                    className="h-6 text-xs"
+                  >
+                    {activeTab === "ru" ? "Назад" : "Atrás"}
+                  </Button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-3">
+                <h3 className="text-sm font-medium mb-2 truncate">{episode.title}</h3>
+                <AudioPlayer
+                  audioUrl={episode.audioUrl}
+                  onTimeUpdate={setCurrentTime}
+                  onDurationChange={setDuration}
+                  language={activeTab}
+                  currentTime={currentTime}
+                />
+              </CardContent>
+            </Card>
+
+            {/* Метки */}
+            <Card className="overflow-hidden">
+              <CardHeader className="p-3 pb-0">
+                <CardTitle className="text-base flex justify-between items-center">
+                  <span>{activeTab === "ru" ? "Метки" : "Marcas"}</span>
+                  {marks.length > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        if (episode) {
+                          dbService.deleteMarksByEpisodeId(episode.id)
+                          setMarks([])
+                          toast({
+                            title: activeTab === "ru" ? "Метки удалены" : "Marcas eliminadas",
+                          })
+                        }
+                      }}
+                      className="h-6 flex items-center space-x-1 text-destructive"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                      <span className="text-xs">{activeTab === "ru" ? "Очистить" : "Limpiar"}</span>
+                    </Button>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-3">
+                <div className="flex items-center space-x-2 mb-2">
+                  <Input
+                    placeholder={activeTab === "ru" ? "Название метки" : "Título de la marca"}
+                    value={markTitle}
+                    onChange={(e) => setMarkTitle(e.target.value)}
+                    className="flex-1 h-8 text-sm"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => addMark()}
+                    className="h-8 flex items-center space-x-1"
+                  >
+                    <BookmarkPlus className="h-3 w-3" />
+                    <span className="text-xs">{activeTab === "ru" ? "Добавить" : "Añadir"}</span>
+                  </Button>
+                </div>
+
+                <MarksView
+                  marks={marks}
+                  onMarkClick={navigateToMark}
+                  onMarkEdit={handleMarkEdit}
+                  onMarkDelete={handleMarkDelete}
+                  language={activeTab}
+                />
+              </CardContent>
+            </Card>
+
+            {/* Информация о транскрипции */}
+            <Card className="overflow-hidden">
+              <CardHeader className="p-3 pb-0">
+                <CardTitle className="text-base">{activeTab === "ru" ? "Информация" : "Información"}</CardTitle>
+              </CardHeader>
+              <CardContent className="p-3">
+                <TranscriptInfo transcript={activeTab === "ru" ? transcriptRu : transcriptEs} language={activeTab} />
+              </CardContent>
+            </Card>
           </div>
-        )}
-      </Card>
+
+          {/* Правая колонка - транскрипция */}
+          <div className="md:col-span-2">
+            <Card className="h-full">
+              <CardHeader className="p-3 pb-0">
+                <CardTitle className="text-base">{activeTab === "ru" ? "Транскрипция" : "Transcripción"}</CardTitle>
+              </CardHeader>
+              <CardContent className="p-3">
+                <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "ru" | "es")}>
+                  <TabsList className="grid w-full grid-cols-2 mb-3">
+                    <TabsTrigger value="ru">Русский</TabsTrigger>
+                    <TabsTrigger value="es">Español</TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="ru">
+                    <TranscriptView
+                      transcript={transcriptRu}
+                      activeSegmentId={activeSegmentId}
+                      onSegmentClick={navigateToSegment}
+                      onSegmentEdit={handleTranscriptEdit}
+                      onAddMark={handleAddMarkFromTranscript}
+                      language="ru"
+                    />
+                  </TabsContent>
+                  <TabsContent value="es">
+                    <TranscriptView
+                      transcript={transcriptEs}
+                      activeSegmentId={activeSegmentId}
+                      onSegmentClick={navigateToSegment}
+                      onSegmentEdit={handleTranscriptEdit}
+                      onAddMark={handleAddMarkFromTranscript}
+                      language="es"
+                    />
+                  </TabsContent>
+                </Tabs>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
